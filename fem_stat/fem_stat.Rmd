@@ -1,0 +1,176 @@
+
+#title: "Female Statistics (2015)"
+#author: "Miasnikova"
+#date: "March 8, 2017"
+
+
+## Libraries 
+ 
+library("data.table")
+library("ggplot2")
+library("corrgram")
+library("DT")
+library("psych")
+
+getwd()
+
+## Getting and Formatting data
+
+#First we download the data from https://inclass.kaggle.com/undp/human-development/version/1. We take 2 #tables: "gender_inequality.csv" and "gender_development.csv". Then we format the data, check if the data #tables contain consistent data (in terms of countries), remove the Country column
+
+
+gen_ineq <- read.csv("gender_inequality.csv", na.strings = c(".."))
+gen_ineq <- gen_ineq[,c(2:length(gen_ineq))]
+gen_dev  <- read.csv("gender_development.csv", na.strings = c(".."))
+gen_dev <- gen_dev[,c(2:length(gen_dev))]
+stopifnot(!setdiff(gen_ineq$Country,gen_dev$Country))
+gen_dev <- gen_dev[,c(2:length(gen_dev))]
+gen <- as.data.table(c(gen_ineq,gen_dev))
+gen <- gen[complete.cases(gen),]
+
+
+#Let's find outliers:
+
+
+corrgram(gen[,c(2:length(gen)), with = F], lower.panel = panel.pie, upper.panel = panel.pts, main="Correlogram")
+
+
+## Multivariate: Mahalanobis Distances
+  
+#Indeed, there are some outliers:
+
+income_fem <- gen$Estimated.Gross.National.Income.per.Capita..Female.
+life_expectancy_fem <- gen$Life.Expectancy.at.Birth..Female.
+country <-  gen$Country
+num <- gen[,c(2:length(gen)), with = F]
+gen$ma <- mahalanobis(num, colMeans(num), cov(num))
+ggplot(data = gen, aes(x = 1:nrow(gen),y = ma))+
+  ggtitle("Multivariate outliers")+
+  labs(x = "Position in the ranking", y = "Mahalanobis Distances")+
+  geom_point(alpha = 0.7,aes(size = income_fem, colour = life_expectancy_fem))+
+  geom_text(aes(label=country), size=3, vjust = -1, check_overlap = T)+
+  scale_colour_gradient(low = "#458b45", high = "#00ff00", na.value = "black" )+
+  geom_hline(yintercept =  mean(gen$ma), colour = "red", size = 1,linetype = "longdash")
+
+#We will have to delete them, we will use mean + 2*standard deviation #https://doi.org/10.1080/14640749108400962)
+
+mean_ma <- mean(gen$ma)
+sd_ma <- sd(gen$ma)
+
+newgen <- gen[ma < mean_ma + 2*sd_ma | is.na(ma),]
+
+##  Univariate outliers
+ 
+#Let's consider our key variables: maternal_mortality, income, life_expectancy.
+
+maternal_mortality <- newgen$Maternal.Mortality.Ratio
+ggplot(newgen, aes(maternal_mortality))+
+  geom_density(alpha = 0.3, fill = "yellow", colour = "black", size = 0.9)
+
+
+#Let's cut off the tail on the maternal mortality data.
+
+newgen <- newgen[Maternal.Mortality.Ratio < 600]
+maternal_mortality <- newgen$Maternal.Mortality.Ratio
+
+#The other variables are ok:
+
+income_fem <- newgen$Estimated.Gross.National.Income.per.Capita..Female.
+ggplot(newgen, aes(income_fem))+
+  geom_density(alpha = 0.3, fill = "yellow", colour = "black", size = 0.9)
+
+life_expectancy_fem <- newgen$Life.Expectancy.at.Birth..Female.
+ggplot(newgen, aes(life_expectancy_fem))+
+  geom_density(alpha = 0.3, fill = "green", colour = "black", size = 0.9)
+
+
+## Clean data
+
+datatable(newgen)
+
+#Here we can see, the data are less disperse:
+
+corrgram(newgen[,c(2:length(newgen)), with = F], lower.panel = panel.pie, upper.panel = panel.pts, main="Correlogram")
+
+## Data analysis
+
+#Let's consider the relation between national income and human development index, which is integral #variable, includes different aspects of evaluation
+#of the benefits of a person in a particular society. 
+
+labour_force_fem <- newgen$Labour.Force.Participation.Rate..Female.
+human_development_fem <- newgen$Human.Development.Index..Female.
+ggplot(newgen, aes(x = income_fem, y = human_development_fem, group = newgen$Country, color = life_expectancy_fem))+
+  geom_point(aes(size = labour_force_fem))
+
+#It's nonlinear. Probably, rich Arabian and Asian countries bias the statistics. It's still tempting to do #some linear fits and look at the residuals.
+
+#Now let's get the logarithmic transform of the relation between national income and human development #index. 
+
+income_fem <- log10(income_fem)
+ggplot(newgen, aes(x = income_fem, y = human_development_fem, group = newgen$Country, color = life_expectancy_fem))+
+  geom_point(aes(size = labour_force_fem))
+intres <- lm(data = newgen, formula = human_development_fem  ~ income_fem, na.action = na.exclude)
+hist(resid(intres))
+
+#As we can see, mean the residuals tend to 0, which is ok.
+
+#We finally get some sort of linear relation. If we can apply linear fit to evaluate the deviation of #residuals from the linear model, we will see that the residuals fluctuate within abs(1/10), which lets us #conclude that linear model explains our data adequately.That is to say, we see that the income predefines #the value of human development index for women (p-value: < 2.2e-16,R-squared: 0.90 ):
+
+summary(intres)
+
+#R-squared:  0.92 means that the income explains human development index pretty well.
+
+#Let's go into the relations among labor involvement and the other key vars.
+
+sec_education_fem  <- newgen$Population.with.Secondary.Education..Female.
+mean_y_education <- newgen$Mean.Years.of.Education..Female.
+ggplot(newgen, aes(x = labour_force_fem, y = maternal_mortality, color = mean_y_education))+
+    geom_point(aes(size = sec_education_fem))+
+    geom_text(aes(label=newgen$Country), size=3, vjust = -1, check_overlap = T)
+
+#Let's correlate the variables. We use Spearman's correlation because it does not require normality of #distribution of data (doi: 10.1037/a0028087).  The relation between maternal mortality and the mean years #of education is significant and equals rho =-0.78 which is pretty obvious and possibly presupposes some #third factor such as the high standard of living. Indeed, correlation between income fem, maternal_ #mortality equals -0.86, p-value = 2.2e-16. However, the relation between income_fem, labour force is not that obvious and simple: rho = -0.05, p-value = 0.54. Let's go into it.
+
+cor.test(mean_y_education, maternal_mortality, method = "spearman")
+cor.test(income_fem, maternal_mortality, method = "spearman")
+cor.test(income_fem, labour_force_fem, method = "spearman")
+
+#Now we will look at the relation between the amount of women involved into working activities and income #per capita. From the plot (see line 104) we can see that relation is nonlinear. We have already mentioned #that Spearman's correlation doesn't work here (rho = -0.05, p-value = 0.54). There is some "median #cluster" where many of the observed countries are grouped and there are 2 tails.The tail with low 
+#income and high involvement in labor corresponds to poor African countries. The tail with low labor #involvement and low and medium income corresponds to Arabian countries, where muslim women keep the #house. We also see that the number of years in education fluctuates more in the tails than in the #"center". It lets us assume that the data in the center are homogenoious whereas in the tails they are #more complicated. Still, the value of residuals looks good varying from 1/10 to 1/100:
+
+ggplot(newgen, aes(x = labour_force_fem, y = income_fem, group = newgen$Country, color = abs(resid(intres))))+
+  geom_point(aes(size = life_expectancy_fem))
+
+#Let's try out and evaluating the factors.
+
+adolscent_b_r <- newgen$Adolescent.Birth.Rate
+repr_in_parliament <- newgen$Percent.Representation.in.Parliament
+gender_dev <- newgen$Gender.Development.Index..GDI.
+human_dev <- newgen$Human.Development.Index..Female.
+lif_exp <- newgen$Life.Expectancy.at.Birth..Female.
+exp_years_edu <- newgen$Expected.Years.of.Education..Female.
+ng1 <- matrix(c(labour_force_fem,   #1
+                maternal_mortality, #2
+                adolscent_b_r,      #3
+                sec_education_fem,  #4
+                gender_dev,         #5
+                human_dev,          #6
+                lif_exp,            #7
+                exp_years_edu,      #8
+                mean_y_education,   #9
+                income_fem),        #10
+              ncol = 10 )
+
+principal(cor(ng1), nfactors = 5, rotate = "varimax")
+
+
+#What we see here is that we can extract at least 5 factors. RC1, which gives the biggest load, is assocated with high negative values of maternal mortality and adolscent birth ratio, with big positive contribution of life expectancy and income of women. Let's call this factor "standard of living of women", a measure of wellbeing of women in a particular society. RC3 is an educational factor (big load of average years in education and education of women), which may reflect a human development index in women in a society. The other factors are behind the first two.
+
+#Let's look at the cumulative var of our model - we see that the bigger the load of a factor the smaller #its cumulative variance.
+#We have  a simpler structure of variables grouped in standard of living (health and income),  and human #development factors (education) for women. Note, that when we do the log transform of the factor of #standard of living, we make its contribution measured as SS loading smaller (3.17 after logtransform as #compared to 3.29 before logtransform). It looks like contradiction with our previous results (income as a #predictor, good R squared value). However, mathematically, when we apply log transform, the difference #between 2 neighboring values gets smaller which may cause the effect.
+
+## Conclusions
+
+#1. In our analysis we have elaborated on the dependencies between income, labor involvement and education #in women population, their interrelations and association with maternal mortality and life expectancy. We #saw that the countries can be subdivided into several groups according to their relations between those #variables. Thus, for group one we have pretty good numbers in terms of maternal mortality and the reach #of secondary education, although labor involvement is not really big. There are also countries where bad #numbers associated with maternal mortality go with high labor involvement. All in all, we have a new type #of classification of countries in terms of their gender-related social and economical parameters.
+#2. We have a nonlinear relation between human development index (HDI) and income per capita in women. #Human development index is an integrated variable representing healthcare, education, life expectancy, #income per capita. After transforming the data we applied some linear fit which gave us a statistically #significant result. It's pretty tautological - we have this component in the formula of HDI, but it is #interesting to evaluate its ratio somehow without knowing the weights. Here we can see that the income is #a robust, reliable predictor of HDI.
+#3. Also, speaking of integral variable, we tried to perform the Principal Component Analysis. What we got #there are actually (and not surprisingly) main composites of HDI: we have several factors, representing #education, standard of living and "wellness" of society for women. Not really interesting may be but #still shows that the tools work ok.
+
