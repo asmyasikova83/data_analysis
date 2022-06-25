@@ -1,6 +1,7 @@
 # data_analysis
 
 Project 'Female Statistics' represents data preprocessing, cleaning and analysis using linear fit and principal component analysis in R.
+
 #1. In our analysis we have elaborated on the dependencies between income, labor involvement and education in women population, their 
 #interrelations and association with maternal mortality and life expectancy. We saw that the countries can be subdivided into several groups
 #according to their relations between those variables.
